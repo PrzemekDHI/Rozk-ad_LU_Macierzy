@@ -1,122 +1,249 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
-namespace RozkladLU_Graf
+namespace RozkladLU_PelnaAnaliza
 {
-    // Struktura odpowiadająca kolumnom z Twojego slajdu
-    public struct RekordGrafu
+    public class Rekord
     {
+        public string Gniazdo; // G1 lub G2
         public int Nr;
-        public int W1, W2, W3;
-        public string Im, Ia2, Ia1;
+        public int i1, i2, i3;
+        public (int, int) Im, Ia2, Ia1; // Adresy komórek macierzy
+
+        public override string ToString()
+        {
+            return $"{Gniazdo}(nr:{Nr}, i1={i1}, i2={i2}, i3={i3})";
+        }
     }
 
     class Program
     {
-        static void Main(string[] args)
+        static void Main()
         {
-            Console.WriteLine("=== Rozkład LU z generowaniem tabeli grafu ===\n");
+            Console.WriteLine("=== ANALIZA ROZKŁADU LU - GENERATOR GRAFÓW ZALEŻNOŚCI ===\n");
 
-            // Macierz 4x4 (żeby tabela była dłuższa, jak w przykładzie)
-            double[,] macierz = {
-                { 2, -1, 3, 1 },
-                { 4, 2, -1, 3 },
-                { -2, 3, 1, 5 },
-                { 1, 1, 1, 1 }
-            };
+            int N = PobierzRozmiarMacierzy();
 
-            Console.WriteLine("Macierz wejściowa:");
-            WyswietlMacierz(macierz);
+            Console.WriteLine($"\nGenerowanie operacji dla macierzy {N}×{N}...");
+            var (tabelaG1, tabelaG2) = GenerujWszystkieOperacje(N);
 
-            // Uruchomienie algorytmu
-            var (L, U, tabela) = RozkladLU_Z_Generatorem(macierz);
+            Console.WriteLine("Tworzenie kolejności wykonania...");
+            var wszystkie = PobierzOperacjeWKolejnosciWykonania(tabelaG1, tabelaG2);
 
-            // Wyświetlenie wyników
-            Console.WriteLine("Macierz L:");
-            WyswietlMacierz(L);
-            Console.WriteLine("Macierz U:");
-            WyswietlMacierz(U);
+            Console.WriteLine("Analiza zależności...");
+            string nazwaPliku = $"analiza_LU_N{N}.txt";
+            ZapiszRaport(tabelaG1, tabelaG2, wszystkie, nazwaPliku);
 
-            // Zapis do pliku tekstowego (tabela jak ze slajdu)
-            ZapiszTabeleDoPliku(tabela, "tabela_grafu.txt");
+            Console.WriteLine($"\n✓ Gotowe! Raport zapisany w pliku: '{nazwaPliku}'");
+            Console.WriteLine($"  - Operacji G1: {tabelaG1.Count}");
+            Console.WriteLine($"  - Operacji G2: {tabelaG2.Count}");
+            Console.WriteLine($"  - Łącznie operacji: {wszystkie.Count}");
 
-            Console.WriteLine("Sukces! Tabela grafu została zapisana do pliku 'tabela_grafu.txt'.");
-            Console.WriteLine("Naciśnij dowolny klawisz, aby zamknąć...");
-            Console.ReadKey();
+            Console.WriteLine("\nNaciśnij Enter aby zakończyć...");
+            Console.ReadLine();
         }
 
-        static (double[,] L, double[,] U, List<RekordGrafu> tabela) RozkladLU_Z_Generatorem(double[,] A)
+        static int PobierzRozmiarMacierzy()
         {
-            int n = A.GetLength(0);
-            double[,] U = (double[,])A.Clone();
-            double[,] L = new double[n, n];
-            for (int i = 0; i < n; i++) L[i, i] = 1.0;
-
-            List<RekordGrafu> tabela = new List<RekordGrafu>();
-            int licznik = 0;
-
-            // Pętle i1, i2, i3 (mapowanie: k, i, j)
-            // Zakresy ustawione tak, aby odpowiadały indeksowaniu od 1 (jak na slajdzie)
-            for (int k = 1; k <= n - 1; k++) // i1
+            while (true)
             {
-                for (int i = k + 1; i <= n; i++) // i2
+                Console.Write("Podaj rozmiar macierzy N (2-100): ");
+                string input = Console.ReadLine();
+
+                if (int.TryParse(input, out int n))
                 {
-                    // Obliczenie mnożnika (Gniazdo G1)
-                    double mnoznik = U[i - 1, k - 1] / U[k - 1, k - 1];
-                    L[i - 1, k - 1] = mnoznik;
-
-                    for (int j = k + 1; j <= n; j++) // i3
+                    if (n >= 2 && n <= 100)
                     {
-                        // Operacja aktualizacji (Gniazdo G2)
-                        U[i - 1, j - 1] -= mnoznik * U[k - 1, j - 1];
+                        return n;
+                    }
+                    else
+                    {
+                        Console.WriteLine("Błąd: Rozmiar musi być między 2 a 100.");
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("Błąd: Proszę podać liczbę całkowitą.");
+                }
+            }
+        }
 
-                        // Rejestracja wiersza tabeli
-                        licznik++;
-                        tabela.Add(new RekordGrafu
+        static (List<Rekord> g1, List<Rekord> g2) GenerujWszystkieOperacje(int n)
+        {
+            var g1 = new List<Rekord>();
+            var g2 = new List<Rekord>();
+            int n1 = 1, n2 = 1;
+
+            for (int k = 1; k <= n - 1; k++)
+            {
+                for (int i = k + 1; i <= n; i++)
+                {
+                    // Gniazdo G1: obliczanie mnożnika m[i,k] = a[i,k] / a[k,k]
+                    g1.Add(new Rekord
+                    {
+                        Gniazdo = "G1",
+                        Nr = n1++,
+                        i1 = k,
+                        i2 = i,
+                        i3 = k,
+                        Im = (i, k),      // czyta a[i,k]
+                        Ia2 = (k, k),     // czyta a[k,k]
+                        Ia1 = (i, k)      // zapisuje m[i,k] (nadpisuje a[i,k])
+                    });
+
+                    for (int j = k + 1; j <= n; j++)
+                    {
+                        // Gniazdo G2: aktualizacja a[i,j] = a[i,j] - m[i,k] * a[k,j]
+                        g2.Add(new Rekord
                         {
-                            Nr = licznik,
-                            W1 = k,
-                            W2 = i,
-                            W3 = j,
-                            Im = $"<{i},{k}>",   // m[i2, i1]
-                            Ia2 = $"<{k},{j}>",  // a[i1, i3]
-                            Ia1 = $"<{i},{j}>"   // a[i2, i3]
+                            Gniazdo = "G2",
+                            Nr = n2++,
+                            i1 = k,
+                            i2 = i,
+                            i3 = j,
+                            Im = (i, k),      // czyta m[i,k]
+                            Ia2 = (k, j),     // czyta a[k,j]
+                            Ia1 = (i, j)      // zapisuje a[i,j]
                         });
                     }
                 }
             }
-            return (L, U, tabela);
+            return (g1, g2);
         }
 
-        static void ZapiszTabeleDoPliku(List<RekordGrafu> tabela, string nazwaPliku)
+        static List<Rekord> PobierzOperacjeWKolejnosciWykonania(List<Rekord> g1, List<Rekord> g2)
         {
-            using (StreamWriter sw = new StreamWriter(nazwaPliku))
-            {
-                sw.WriteLine("Konstruowanie grafów algorytmów - Tabela G2");
-                sw.WriteLine("------------------------------------------------------------------");
-                sw.WriteLine("{0,-4} | {1,-2} {2,-2} {3,-2} | {4,-8} | {5,-8} | {6,-8}",
-                             "nr", "W1", "W2", "W3", "Im[nr]", "Ia2[nr]", "Ia1[nr]");
-                sw.WriteLine("------------------------------------------------------------------");
+            var res = new List<Rekord>();
 
-                foreach (var r in tabela)
+            // Grupujemy operacje G2 według (i1, i2) dla łatwego dostępu
+            var g2PodlaKlucza = g2.GroupBy(r => (r.i1, r.i2))
+                                  .ToDictionary(g => g.Key, g => g.ToList());
+
+            // Przechodzimy przez operacje G1 w kolejności wykonania
+            foreach (var operacjaG1 in g1)
+            {
+                // Dodajemy operację G1
+                res.Add(operacjaG1);
+
+                // Dodajemy wszystkie powiązane operacje G2 dla tego samego (k, i)
+                var klucz = (operacjaG1.i1, operacjaG1.i2);
+                if (g2PodlaKlucza.TryGetValue(klucz, out var powiazaneG2))
                 {
-                    sw.WriteLine("{0,-4} | {1,-2} {2,-2} {3,-2} | {4,-8} | {5,-8} | {6,-8}",
-                        r.Nr, r.W1, r.W2, r.W3, r.Im, r.Ia2, r.Ia1);
+                    // Dodajemy G2 w kolejności rosnących j (i3)
+                    res.AddRange(powiazaneG2.OrderBy(r => r.i3));
                 }
             }
+
+            return res;
         }
 
-        static void WyswietlMacierz(double[,] M)
+        static void ZapiszRaport(List<Rekord> g1, List<Rekord> g2, List<Rekord> wszystkie, string plik)
         {
-            int n = M.GetLength(0);
-            for (int i = 0; i < n; i++)
+            using (StreamWriter sw = new StreamWriter(plik))
             {
-                for (int j = 0; j < n; j++)
-                    Console.Write($"{M[i, j],8:F2} ");
-                Console.WriteLine();
+                sw.WriteLine("=======================================================");
+                sw.WriteLine("   ANALIZA ROZKŁADU LU - ZALEŻNOŚCI INFORMACYJNE");
+                sw.WriteLine("=======================================================\n");
+
+                sw.WriteLine("=== TABELA G1 (Obliczanie mnożników) ===");
+                sw.WriteLine("Operacja: m[i,k] = a[i,k] / a[k,k]");
+                sw.WriteLine("nr | i1 | i2 | i3 | Im(czyt) | Ia2(czyt) | Ia1(zapis)");
+                sw.WriteLine("---+----+----+----+----------+-----------+-----------");
+                foreach (var r in g1)
+                {
+                    sw.WriteLine($"{r.Nr,2} | {r.i1,2} | {r.i2,2} | {r.i3,2} | " +
+                                $"<{r.Im.Item1},{r.Im.Item2}>    | " +
+                                $"<{r.Ia2.Item1},{r.Ia2.Item2}>      | " +
+                                $"<{r.Ia1.Item1},{r.Ia1.Item2}>");
+                }
+
+                sw.WriteLine("\n=== TABELA G2 (Aktualizacja macierzy) ===");
+                sw.WriteLine("Operacja: a[i,j] = a[i,j] - m[i,k] * a[k,j]");
+                sw.WriteLine("nr | i1 | i2 | i3 | Im(czyt) | Ia2(czyt) | Ia1(zapis)");
+                sw.WriteLine("---+----+----+----+----------+-----------+-----------");
+                foreach (var r in g2)
+                {
+                    sw.WriteLine($"{r.Nr,2} | {r.i1,2} | {r.i2,2} | {r.i3,2} | " +
+                                $"<{r.Im.Item1},{r.Im.Item2}>    | " +
+                                $"<{r.Ia2.Item1},{r.Ia2.Item2}>      | " +
+                                $"<{r.Ia1.Item1},{r.Ia1.Item2}>");
+                }
+
+                sw.WriteLine("\n=== KOLEJNOŚĆ WYKONANIA OPERACJI ===");
+                for (int i = 0; i < wszystkie.Count; i++)
+                {
+                    var op = wszystkie[i];
+                    sw.WriteLine($"{i + 1,3}. {op}");
+                }
+
+                sw.WriteLine("\n=== WSZYSTKIE ŁUKI ZALEŻNOŚCI INFORMACYJNEJ (RAW) ===");
+                sw.WriteLine("Zależność: Operacja Y czyta dane zapisane przez wcześniejszą operację X");
+                sw.WriteLine("Format: X ---> Y | przez adres | opis\n");
+
+                int liczbaZaleznosci = 0;
+
+                // Szukamy wszystkich zależności RAW (Read After Write)
+                for (int y = 0; y < wszystkie.Count; y++)
+                {
+                    for (int x = 0; x < y; x++)
+                    {
+                        var opX = wszystkie[x]; // Operacja wcześniejsza (producent)
+                        var opY = wszystkie[y]; // Operacja późniejsza (konsument)
+
+                        // Sprawdzamy czy Y czyta to, co X zapisał
+                        // Y czyta przez Im lub Ia2, X zapisuje przez Ia1
+
+                        if (opY.Im == opX.Ia1)
+                        {
+                            sw.WriteLine($"{opX.Gniazdo}(nr:{opX.Nr}) ---> {opY.Gniazdo}(nr:{opY.Nr}) " +
+                                       $"| przez adres: <{opX.Ia1.Item1},{opX.Ia1.Item2}> " +
+                                       $"| Y.Im czyta wynik X.Ia1");
+                            liczbaZaleznosci++;
+                        }
+
+                        if (opY.Ia2 == opX.Ia1)
+                        {
+                            sw.WriteLine($"{opX.Gniazdo}(nr:{opX.Nr}) ---> {opY.Gniazdo}(nr:{opY.Nr}) " +
+                                       $"| przez adres: <{opX.Ia1.Item1},{opX.Ia1.Item2}> " +
+                                       $"| Y.Ia2 czyta wynik X.Ia1");
+                            liczbaZaleznosci++;
+                        }
+                    }
+                }
+
+                sw.WriteLine($"\n=== PODSUMOWANIE ===");
+                sw.WriteLine($"Liczba operacji G1: {g1.Count}");
+                sw.WriteLine($"Liczba operacji G2: {g2.Count}");
+                sw.WriteLine($"Łączna liczba operacji: {wszystkie.Count}");
+                sw.WriteLine($"Liczba wykrytych zależności RAW: {liczbaZaleznosci}");
+
+                sw.WriteLine("\n=== STATYSTYKI ZALEŻNOŚCI ===");
+
+                // Zliczamy zależności według typu
+                int g1_g1 = 0, g1_g2 = 0, g2_g2 = 0;
+
+                for (int y = 0; y < wszystkie.Count; y++)
+                {
+                    for (int x = 0; x < y; x++)
+                    {
+                        var opX = wszystkie[x];
+                        var opY = wszystkie[y];
+
+                        if (opY.Im == opX.Ia1 || opY.Ia2 == opX.Ia1)
+                        {
+                            if (opX.Gniazdo == "G1" && opY.Gniazdo == "G1") g1_g1++;
+                            else if (opX.Gniazdo == "G1" && opY.Gniazdo == "G2") g1_g2++;
+                            else if (opX.Gniazdo == "G2" && opY.Gniazdo == "G2") g2_g2++;
+                        }
+                    }
+                }
+
+                sw.WriteLine($"Zależności G1 → G1: {g1_g1}");
+                sw.WriteLine($"Zależności G1 → G2: {g1_g2}");
+                sw.WriteLine($"Zależności G2 → G2: {g2_g2}");
             }
-            Console.WriteLine();
         }
     }
 }
